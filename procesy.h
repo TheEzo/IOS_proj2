@@ -1,0 +1,2 @@
+void parent();
+void child();
