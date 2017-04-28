@@ -16,13 +16,12 @@ void destroy();
 
 
 // semafory
-sem_t *sem_adults, *sem_mem, *sem, *sem_finish, *sem_finish2, *sem_child_enter, *sem_leaving, *sem_queue;
+sem_t *sem_adults, *sem_mem, *sem, *sem_finish, *sem_finish2, *sem_child_enter, *sem_leaving, *sem_queue, *sem_vars;
 
 // sdílená paměť
 int *count, *adults_in, *children_in;
 
-int *val, *CC, *CA, total_adults = 0, status, indexx, waiting_children = 0;
-pid_t *arr;
+int *val, waiting_children = 0;
 
 // vstup pro prints()
 char *types[6];
@@ -98,9 +97,7 @@ int main(int argc, char **argv){
     setbuf(stdout,NULL);
     setbuf(stderr,NULL);
 
-    arr = (pid_t *)malloc((A+C)*sizeof(pid_t));
     init();
-
 
     pid_t pid;
 
@@ -158,22 +155,19 @@ void child_gen(int C, int CGT, int CWT){
             fprintf(stderr, "Fork failed!\n");
             exit(2);
         }
-        arr[indexx] = pid;
-        indexx++;
-        if(pid == 0){
-            //int boolean = 0;
-            prints("C", i, 0, 0, 0);
 
+        if(pid == 0){
+            prints("C", i, 0, 0, 0);
             if(*adults_in*3 <= *children_in){
                 prints("C", i, 4, *adults_in, *children_in);
-                sem_wait(sem_mem);
+                sem_wait(sem_vars);
                 waiting_children++;
-                sem_post(sem_mem);
+                sem_post(sem_vars);
                 sem_wait(sem_child_enter);
             }
+
             sem_wait(sem);
 
-            /** doplnit podmínku při vstupu pro děti */
             prints("C", i, 1, 0, 0);
             (*children_in)++;
             usleep(CWT*1000);
@@ -193,12 +187,8 @@ void child_gen(int C, int CGT, int CWT){
             sem_wait(sem_finish);
             prints("C", i, 5, 0, 0);
             exit(0);
-        } else{
-            arr[indexx] = pid;
-            indexx++;
         }
     }
-    wait(&status);
 }
 
 /**
@@ -208,8 +198,8 @@ void child_gen(int C, int CGT, int CWT){
  * @param AWT Cas, po kterem se rodic pokousi opustit kritickou zonu
  */
 void parent_gen(int A, int AGT, int AWT, int C){
-    pid_t pid;
     for(int i = 1; i <= A; i++){
+        pid_t pid;
         if(AGT > 0) {
             usleep((rand() % (AGT+1)) * 1000);
         }
@@ -222,19 +212,24 @@ void parent_gen(int A, int AGT, int AWT, int C){
             int boolean = 0;
             prints("A", i, 0, 0, 0);
 
-            total_adults++;
             prints("A", i, 1, 0, 0);
-            if(waiting_children > 0){
-                if(waiting_children > 0){
-                    if(waiting_children >= 3){
+            // uvolnění 3 míst
+            for (int j = 0; j < 3; j++) {
+                sem_post(sem);
+            }
+            (*adults_in)++;
+            usleep(AWT * 1000);
+
+            if (waiting_children > 0) {
+                if (waiting_children > 0) {
+                    if (waiting_children >= 3) {
                         for (int j = 0; j < 3; ++j) {
                             sem_post(sem_child_enter);
                         }
                         sem_wait(sem_mem);
-                        waiting_children-=3;
+                        waiting_children -= 3;
                         sem_post(sem_mem);
-                    }
-                    else{
+                    } else {
                         sem_wait(sem_mem);
                         int x = waiting_children;
                         for (int j = 0; j < x; ++j) {
@@ -246,17 +241,10 @@ void parent_gen(int A, int AGT, int AWT, int C){
                 }
             }
 
-
-            // uvolnění 3 míst
-            for (int j = 0; j < 3; j++)
-                sem_post(sem);
-            (*adults_in)++;
-            usleep(AWT*1000);
-
             // trying to leave - leave (waiting) jdoucí za sebou
             sem_wait(sem_leaving);
             prints("A", i, 2, 0, 0);
-            if (*adults_in * 3 <= *children_in+2) {
+            if (*adults_in * 3 <= *children_in + 2) {
                 prints("A", i, 4, *adults_in, *children_in);
                 sem_post(sem_leaving);
                 boolean = 1;
@@ -269,24 +257,21 @@ void parent_gen(int A, int AGT, int AWT, int C){
             }
             prints("A", i, 3, 0, 0);
             (*adults_in)--;
-            if(boolean == 0)
+            if (boolean == 0)
                 sem_post(sem_leaving);
 
             sem_post(sem_finish2);
             sem_wait(sem_finish);
             prints("A", i, 5, 0, 0);
             exit(0);
-        } else {
-            arr[indexx] = pid;
-            indexx++;
         }
-        sleep(2);
+
+        sleep(1);
         for (int j = 0; j < C; j++){
             sem_post(sem);
             sem_post(sem_child_enter);
         }
     }
-    wait(&status);
 }
 
 /**
@@ -322,6 +307,7 @@ void init(){
     sem_child_enter = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     sem_leaving = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     sem_queue = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    sem_vars = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
     val = malloc(sizeof(int));
 
@@ -334,6 +320,7 @@ void init(){
     sem_init(sem_child_enter, 1, 0);
     sem_init(sem_leaving, 1, 1);
     sem_init(sem_queue, 1, 1);
+    sem_init(sem_vars, 1, 1);
 
     *children_in = 0;
     *adults_in = 0;
@@ -350,6 +337,7 @@ void destroy(){
     sem_destroy(sem_child_enter);
     sem_destroy(sem_leaving);
     sem_destroy(sem_queue);
+    sem_destroy(sem_vars);
 
     munmap(count, sizeof(int));
     munmap(sem, sizeof(sem_t));
@@ -360,7 +348,7 @@ void destroy(){
     munmap(sem_child_enter, sizeof(sem_t));
     munmap(sem_leaving, sizeof(sem_t));
     munmap(sem_queue, sizeof(sem_t));
+    munmap(sem_vars, sizeof(sem_t));
 
-    free(arr);
     free(val);
 }
