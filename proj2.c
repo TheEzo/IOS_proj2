@@ -20,7 +20,8 @@ sem_t *sem_mem, *sem_child_cap, *sem_finish, *sem_prints, *sem_child_queue, *sem
 sem_t *sem_adult_leaving, *sem_waiting_for_parent, *sem_child_stopped, *w_enter, *o_enter;
 
 // sdílená paměť
-int *count, *adults_in, *children_in, *finishing, *total_adults_finished, *children_waiting, *parent_waiting, *stopped_child;
+int *count, *adults_in, *children_in, *finishing, *total_adults_finished, *children_waiting, *parent_waiting;
+int *stopped_child, *waiting_for_parent;
 
 int *val;
 
@@ -163,14 +164,24 @@ void child_gen(int C, int A, int CGT, int CWT, FILE * output){
 
             if(A != *total_adults_finished && *children_in+1 > *adults_in*3){
                 if(*parent_waiting > 0) {
-                    //sem_wait(sem_child_queue);/*************dítě nebrání rodičovi v odchodu*********/
-                    printf("TODO\n");
-                    fflush(stdout);
-                    pid= getpid();
-                    kill(pid, SIGKILL);
+                    /*************dítě nebrání rodičovi v odchodu*********/
+                    sem_wait(sem_mem);
+                    (*waiting_for_parent)++;
+                    sem_post(sem_mem);
+
+                    sem_wait(sem_waiting_for_parent);
+                    sem_wait(sem_child_cap);
+
+                    sem_wait(sem_prints);
+                    sem_wait(sem_mem);
+                    (*children_in)++;
+                    sem_post(sem_mem);
+                    //enter
+                    prints("C", i, 1, 0, 0, output);
+                    sem_post(sem_prints);
+
                 }
                 else{
-
                     prints("C", i, 4, *adults_in, *children_in, output);
 
                     sem_wait(sem_mem);
@@ -179,7 +190,7 @@ void child_gen(int C, int A, int CGT, int CWT, FILE * output){
 
                     sem_wait(w_enter);
                     sem_wait(sem_child_cap);
-                    printf("vlezl tam harant %d\n", i);
+
                     sem_wait(sem_prints);
                     sem_wait(sem_mem);
                     (*children_in)++;
@@ -191,17 +202,26 @@ void child_gen(int C, int A, int CGT, int CWT, FILE * output){
             }
             else{
                 if(*parent_waiting > 0) {
-                    //sem_wait(sem_child_queue);/*************dítě nebrání rodičovi v odchodu*********/
-                    printf("TODO\n");
-                    fflush(stdout);
-                    pid = getpid();
-                    kill(pid, SIGKILL);
+                    /*************dítě nebrání rodičovi v odchodu*********/
+                    sem_wait(sem_mem);
+                    (*waiting_for_parent)++;
+                    sem_post(sem_mem);
+
+                    sem_wait(sem_waiting_for_parent);
+                    sem_wait(sem_child_cap);
+
+                    sem_wait(sem_prints);
+                    sem_wait(sem_mem);
+                    (*children_in)++;
+                    sem_post(sem_mem);
+                    //enter
+                    prints("C", i, 1, 0, 0, output);
+                    sem_post(sem_prints);
                 }
                 else{
 
                     sem_wait(o_enter);
                     sem_wait(sem_child_cap);
-                    printf("vlezl tam harant %d\n", i);
                     sem_wait(sem_prints);
                     sem_wait(sem_mem);
                     (*children_in)++;
@@ -230,6 +250,8 @@ void child_gen(int C, int A, int CGT, int CWT, FILE * output){
             else{ //jinak může vpustit další dítě
                 if(*children_waiting > 0)
                     sem_post(w_enter);
+                else
+                    sem_post(o_enter);
                 sem_post(sem_child_cap);
                 sem_post(sem_prints);
             }
@@ -265,7 +287,6 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
         if(AGT > 0) {
             usleep((rand() % (AGT+1)) * 1000);
         }
-
         if((pid = fork()) < 0){
             fprintf(stderr, "Fork failed!\n");
             exit(2);
@@ -286,7 +307,35 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
             (*adults_in)++;
             sem_post(sem_mem);
             //vytvoření 3 míst
-            if(*children_waiting > 0){
+            printf("%d waiting children | %d no parent\n", *children_waiting, *waiting_for_parent);
+            if(*waiting_for_parent > 0){
+                if(*waiting_for_parent > 3){
+                    sem_wait(sem_mem);
+                    for(int j = 0; j < 3; j++){
+                        sem_post(sem_waiting_for_parent);
+                        sem_post(sem_child_cap);
+                        (*waiting_for_parent)--;
+                    }
+                    sem_post(sem_mem);
+                    sem_post(sem_prints);
+                }
+                else{
+                    int j = 0;
+                    for(; j < *waiting_for_parent; j++){
+                        sem_post(sem_waiting_for_parent);
+                        sem_post(sem_child_cap);
+                    }
+                    for(; j < 3; j++){
+                        sem_post(sem_waiting_for_parent);
+                        sem_post(sem_child_cap);
+                    }
+                    sem_wait(sem_mem);
+                    (*waiting_for_parent) = 0;
+                    sem_post(sem_mem);
+                    sem_post(sem_prints);
+                }
+            }
+            else if(*children_waiting > 0){
                 if(*children_waiting > 3){
                     sem_wait(sem_mem);
                     for (int j = 0; j < 3; j++) {
@@ -308,7 +357,7 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
                         sem_post(sem_child_cap);
                     }
                     sem_wait(sem_mem);
-                    *children_waiting = 0;
+                    (*children_waiting) = 0;
                     sem_post(sem_mem);
                     sem_post(sem_prints);
                 }
@@ -327,7 +376,7 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
 
             sem_wait(sem_prints);
             prints("A", i, 2, 0, 0, output);
-            printf("%d <= %d\n", *adults_in*3-2, *children_in);
+            //printf("%d <= %d\n", *adults_in*3-2, *children_in);
             if(*children_in && *adults_in*3-2 <= *children_in){
                 prints("A", i, 4, *adults_in, *children_in, output);
                 boolean = 0;
@@ -348,7 +397,6 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
             for(int j = 0; j < 3; j++) {
                 sem_wait(sem_child_cap);
             }
-            printf("dekrementace adults\n");
             (*adults_in)--;
             (*total_adults_finished)++;
             prints("A", i, 3, 0, 0, output);
@@ -360,8 +408,8 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
                 for (int j = 0; j < C; j++) {
                     sem_post(w_enter);
                     sem_post(o_enter);
+                    sem_post(sem_waiting_for_parent);
                     sem_post(sem_child_cap);
-                    sem_post(sem_child_queue);
                 }
             }
 
@@ -417,7 +465,8 @@ void init(){
     total_adults_finished = (int*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     children_waiting = (int*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     parent_waiting = (int*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
-    stopped_child =  (int*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    stopped_child = (int*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    waiting_for_parent = (int*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
     sem_child_cap = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     sem_mem = mmap(NULL, sizeof(sem_t), PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
@@ -458,6 +507,11 @@ void init(){
         fprintf(stderr, "Semafor selhal\n");
         exit(2);
     }
+    if(sem_init(sem_waiting_for_parent, 1, 0) == -1){
+        fprintf(stderr, "Semafor selhal\n");
+        exit(2);
+    }
+
 
 
     if(sem_init(sem_adult_leaving, 1, 0) == -1){
@@ -465,10 +519,6 @@ void init(){
         exit(2);
     }
     if(sem_init(sem_child_queue, 1, 0) == -1){
-        fprintf(stderr, "Semafor selhal\n");
-        exit(2);
-    }
-    if(sem_init(sem_waiting_for_parent, 1, 0) == -1){
         fprintf(stderr, "Semafor selhal\n");
         exit(2);
     }
@@ -486,6 +536,7 @@ void init(){
     *children_waiting = 0;
     *parent_waiting = 0;
     *stopped_child = 0;
+    *waiting_for_parent = 0;
 }
 
 void destroy(){
