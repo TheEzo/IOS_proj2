@@ -8,9 +8,9 @@
 
 #define OUTPUT "proj2.out"
 
-void child_gen(int C, int CGT, int CWT);
-void parent_gen(int A, int AGT, int AWT, int C);
-void prints(char *kind, int number, int type, int CA, int CC);
+void child_gen(int C, int CGT, int CWT, FILE * output);
+void parent_gen(int A, int AGT, int AWT, int C, FILE * output);
+void prints(char *kind, int number, int type, int CA, int CC, FILE * out);
 void init();
 void destroy();
 
@@ -108,7 +108,7 @@ int main(int argc, char **argv){
     }
 
     if (pid == 0) { // child generator
-        child_gen(C, CGT, CWT);
+        child_gen(C, CGT, CWT, output);
         exit(0);
     }
     else {
@@ -117,7 +117,7 @@ int main(int argc, char **argv){
             exit(2);
         }
         if (pid == 0) { // adult generator
-            parent_gen(A, AGT, AWT, C);
+            parent_gen(A, AGT, AWT, C, output);
             exit(0);
         }
     }
@@ -146,7 +146,7 @@ int main(int argc, char **argv){
  * @param CGT Cas, po kterem se vygeneruje nove dite
  * @param CWT Cas, po kterem dite opusti kritickou zonu
  */
-void child_gen(int C, int CGT, int CWT){
+void child_gen(int C, int CGT, int CWT, FILE * output){
     pid_t pid;
     for (int i = 1; i <= C; i++) {
         if(CGT > 0) {
@@ -158,18 +158,18 @@ void child_gen(int C, int CGT, int CWT){
         }
 
         if(pid == 0){
-            prints("C", i, 0, 0, 0);
+            prints("C", i, 0, 0, 0, output);
             sem_getvalue(sem_adults_ended, val);
             if(*adults_in*3 <= *children_in && *val == 0){
-                prints("C", i, 4, *adults_in, *children_in);
+                prints("C", i, 4, *adults_in, *children_in, output);
                 sem_post(sem_child_enter2);
                 sem_wait(sem_child_enter);
             }
 
+            sem_wait(sem_leaving);
             sem_wait(sem);
-            //sem_wait(sem_leaving);
-            prints("C", i, 1, 0, 0);
-            //sem_wait(sem_leaving);
+            prints("C", i, 1, 0, 0, output);
+            sem_post(sem_leaving);
 
             sem_wait(sem_vars);
             (*children_in)++;
@@ -178,20 +178,21 @@ void child_gen(int C, int CGT, int CWT){
 
             // trying to leave - leave (waiting) jdoucí za sebou
             sem_wait(sem_leaving);
-            prints("C", i, 2, 0, 0);
-            prints("C", i, 3, 0, 0);
+            prints("C", i, 2, 0, 0, output);
+            prints("C", i, 3, 0, 0, output);
             sem_wait(sem_vars);
             (*children_in)--;
             sem_post(sem_vars);
             sem_post(sem_leaving);
+            if(*adults_in > 0)
+                if(*adults_in*3-2 > *children_in)
+                    sem_post(sem_adults);
 
-            if(*adults_in*3 > *children_in)
-                sem_post(sem_adults);
             sem_post(sem);
 
             sem_post(sem_finish2);
             sem_wait(sem_finish);
-            prints("C", i, 5, 0, 0);
+            prints("C", i, 5, 0, 0, output);
             exit(0);
         }
     }
@@ -203,7 +204,7 @@ void child_gen(int C, int CGT, int CWT){
  * @param AGT Cas, po kterem se vygeneruje novy rodic
  * @param AWT Cas, po kterem se rodic pokousi opustit kritickou zonu
  */
-void parent_gen(int A, int AGT, int AWT, int C){
+void parent_gen(int A, int AGT, int AWT, int C, FILE *output){
     for(int i = 1; i <= A; i++){
         pid_t pid;
         if(AGT > 0) {
@@ -216,55 +217,56 @@ void parent_gen(int A, int AGT, int AWT, int C){
 
         if(pid == 0) {
             int boolean = 0;
-            prints("A", i, 0, 0, 0);
+            prints("A", i, 0, 0, 0, output);
 
             sem_wait(sem_leaving);
-            prints("A", i, 1, 0, 0);
+            prints("A", i, 1, 0, 0, output);
             sem_post(sem_leaving);
 
             // uvolnění 3 míst
-            for (int j = 0; j < 3; j++) {
+            for (int j = 0; j < 3; j++)
                 sem_post(sem);
-            }
 
             sem_wait(sem_vars);
             (*adults_in)++;
             sem_post(sem_vars);
 
-            usleep(AWT * 1000);
 
             // val - aktuální počet dětí čekajících na vstup
             sem_getvalue(sem_child_enter2, val);
             if (*val > 0) {
+                // vpuštění čekajících děti (max 3), pokud jich je méně než 3, uvolní další místa
                 if(*val <= 3){
-                    sem_wait(sem_mem);
                     int j;
-                    for (j = 0; j < *val; j++)
-                        sem_post(sem_child_enter);/********************************************/
-                    for (; j < 3; j++)
+                    for (j = 0; j < *val; j++){
+                        sem_post(sem_child_enter);
+                        sem_wait(sem_child_enter2);
+                    }
+                    for (; j < 3; j++) {
                         sem_post(sem);
-                    sem_post(sem_mem);
+                    }
                 }
                 else{
                     for (int j = 0; j < 3; j++) {
                         sem_post(sem_child_enter);
-                        sem_wait(sem_child_enter2);/***what?*/
+                        sem_wait(sem_child_enter2);
                     }
                 }
             } else {
-                sem_wait(sem_mem);
-                for (int j = 0; j < 3; ++j)
-                    sem_post(sem_child_enter);
-                sem_post(sem_mem);
+                // uvolnění 3 míst pokud nečeká žádné dítě
+                for (int j = 0; j < 3; j++) {
+                    sem_post(sem);
+                }
             }
+            usleep(AWT * 1000);
 
             // trying to leave - leave (waiting) jdoucí za sebou
             sem_wait(sem_leaving);
-            prints("A", i, 2, 0, 0);
+            prints("A", i, 2, 0, 0, output);
             if (*adults_in * 3 <= *children_in + 2) {
-                prints("A", i, 4, *adults_in, *children_in);
-                sem_post(sem_leaving);
+                prints("A", i, 4, *adults_in, *children_in, output);
                 boolean = 1;
+                sem_post(sem_leaving);
                 sem_wait(sem_adults);
             }
 
@@ -272,7 +274,7 @@ void parent_gen(int A, int AGT, int AWT, int C){
             for (int j = 0; j < 3; j++) {
                 sem_wait(sem);
             }
-            prints("A", i, 3, 0, 0);
+            prints("A", i, 3, 0, 0, output);
             sem_wait(sem_vars);
             (*adults_in)--;
             sem_post(sem_vars);
@@ -281,7 +283,7 @@ void parent_gen(int A, int AGT, int AWT, int C){
 
             sem_post(sem_finish2);
             sem_wait(sem_finish);
-            prints("A", i, 5, 0, 0);
+            prints("A", i, 5, 0, 0, output);
             exit(0);
         }
 
@@ -302,12 +304,13 @@ void parent_gen(int A, int AGT, int AWT, int C){
  * @param CA Parametr pro waiting
  * @param CC Parametr pro waiting
  */
-void prints(char *kind, int number, int type, int CA, int CC){
+void prints(char *kind, int number, int type, int CA, int CC, FILE * out){
     sem_wait(sem_mem);
+    (void)out;
     if(type == 4)
-        printf("%d\t: %s %d\t: %s : %d : %d\n", (*count)++, kind, number, types[type], CA, CC);
+        fprintf(stdout, "%d\t: %s %d\t: %s : %d : %d\n", (*count)++, kind, number, types[type], CA, CC);
     else
-        printf("%d\t: %s %d\t: %s\n", (*count)++, kind, number, types[type]);
+        fprintf(stdout, "%d\t: %s %d\t: %s\n", (*count)++, kind, number, types[type]);
     fflush(stdout);
     sem_post(sem_mem);
 }
