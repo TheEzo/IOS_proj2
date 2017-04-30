@@ -166,7 +166,8 @@ void child_gen(int C, int A, int CGT, int CWT, FILE * output){
                     //sem_wait(sem_child_queue);/*************dítě nebrání rodičovi v odchodu*********/
                     printf("TODO\n");
                     fflush(stdout);
-                    kill(pid, SIGSEGV);
+                    pid= getpid();
+                    kill(pid, SIGKILL);
                 }
                 else{
 
@@ -178,7 +179,7 @@ void child_gen(int C, int A, int CGT, int CWT, FILE * output){
 
                     sem_wait(w_enter);
                     sem_wait(sem_child_cap);
-
+                    printf("vlezl tam harant %d\n", i);
                     sem_wait(sem_prints);
                     sem_wait(sem_mem);
                     (*children_in)++;
@@ -193,13 +194,14 @@ void child_gen(int C, int A, int CGT, int CWT, FILE * output){
                     //sem_wait(sem_child_queue);/*************dítě nebrání rodičovi v odchodu*********/
                     printf("TODO\n");
                     fflush(stdout);
-                    kill(pid, SIGSEGV);
+                    pid = getpid();
+                    kill(pid, SIGKILL);
                 }
                 else{
 
                     sem_wait(o_enter);
                     sem_wait(sem_child_cap);
-
+                    printf("vlezl tam harant %d\n", i);
                     sem_wait(sem_prints);
                     sem_wait(sem_mem);
                     (*children_in)++;
@@ -225,8 +227,9 @@ void child_gen(int C, int A, int CGT, int CWT, FILE * output){
                 sem_post(sem_child_cap);
                 sem_post(sem_prints);
             }
-            else{
-
+            else{ //jinak může vpustit další dítě
+                if(*children_waiting > 0)
+                    sem_post(w_enter);
                 sem_post(sem_child_cap);
                 sem_post(sem_prints);
             }
@@ -269,9 +272,12 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
         }
 
         if(pid == 0) {
+            //omezování výpisů
             int boolean = 1;
             //started
+            sem_wait(sem_prints);
             prints("A", i, 0, 0, 0, output);
+            sem_post(sem_prints);
 
             //enter
             sem_wait(sem_prints);
@@ -289,6 +295,7 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
                         (*children_waiting)--;
                     }
                     sem_post(sem_mem);
+                    sem_post(sem_prints);
                 }
                 else{
                     int j = 0;
@@ -303,14 +310,16 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
                     sem_wait(sem_mem);
                     *children_waiting = 0;
                     sem_post(sem_mem);
+                    sem_post(sem_prints);
                 }
             }
-            else
+            else{
                 for(int j = 0; j < 3; j++){
                     sem_post(o_enter);
                     sem_post(sem_child_cap);
                 }
-            sem_post(sem_prints);
+                sem_post(sem_prints);
+            }
 
 
             usleep(AWT * 1000);
@@ -318,7 +327,7 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
 
             sem_wait(sem_prints);
             prints("A", i, 2, 0, 0, output);
-            //printf("%d ----- %d <= %d\n", *children_in, *adults_in*3-2, *children_in);
+            printf("%d <= %d\n", *adults_in*3-2, *children_in);
             if(*children_in && *adults_in*3-2 <= *children_in){
                 prints("A", i, 4, *adults_in, *children_in, output);
                 boolean = 0;
@@ -335,10 +344,11 @@ void parent_gen(int A, int C, int AGT, int AWT, FILE *output){
                 sem_post(sem_mem);
             }
 
-
             // zrušení 3 míst
-            for(int j = 0; j < 3; j++)
+            for(int j = 0; j < 3; j++) {
                 sem_wait(sem_child_cap);
+            }
+            printf("dekrementace adults\n");
             (*adults_in)--;
             (*total_adults_finished)++;
             prints("A", i, 3, 0, 0, output);
